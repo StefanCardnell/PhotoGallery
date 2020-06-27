@@ -12,6 +12,7 @@ import androidx.annotation.NonNull;
 import androidx.collection.LruCache;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -30,8 +31,6 @@ public class ThumbnailDownloader<T> extends HandlerThread {
     // kept up to date and checked as Messages are created and processed, to ensure the currently
     // desired URL for a target is fetched.
     private ConcurrentMap<T, String> mDownloadMap = new ConcurrentHashMap<>();
-    // Uses to ensure the same URL isn't being pre-fetched twice
-    private ConcurrentMap<String, Boolean> mPrefetchMap = new ConcurrentHashMap<>();
     private Handler mResponseHandler;
     private ThumbnailDownloadListener<T> mThumbnailDownloadListener;
     private LruCache<String, Bitmap> mLruCache = new LruCache<String, Bitmap>(LRU_CACHE_SIZE){
@@ -80,8 +79,6 @@ public class ThumbnailDownloader<T> extends HandlerThread {
     }
 
     public void queueThumbnail(T target, String url){
-        Log.i(TAG, "Got a URL: " + url);
-
         if(url == null){
             mDownloadMap.remove(target);
         } else if (mLruCache.get(url) != null) {
@@ -89,25 +86,24 @@ public class ThumbnailDownloader<T> extends HandlerThread {
             mThumbnailDownloadListener.onThumbnailDownloaded(target, cachedBitmap);
         }
         else {
+            mRequestHandler.removeMessages(MESSAGE_DOWNLOAD, target); // Remove existing messages
             mDownloadMap.put(target, url);
             mRequestHandler.obtainMessage(MESSAGE_DOWNLOAD, target).sendToTarget();
         }
     }
 
-    public void queuePrefetch(String url){
-        if(url == null) return;
-        else if(mLruCache.get(url) != null) return; // Already fetched and cached
-        else if(mPrefetchMap.get(url) != null) return; // Fetch already in progress
-        else {
-            mPrefetchMap.put(url, true);
-            mRequestHandler.obtainMessage(MESSAGE_PREFETCH, url).sendToTarget();
+    public void queuePrefetchUrls(List<String> urls, boolean reset){
+        if(reset) mRequestHandler.removeMessages(MESSAGE_PREFETCH); // Remove all prefetch messages
+        for(String url : urls) {
+            if(url == null) continue;
+            else if(mLruCache.get(url) != null) continue; // Already fetched and cached
+            else mRequestHandler.obtainMessage(MESSAGE_PREFETCH, url).sendToTarget();
         }
     }
 
     public void clearQueue() {
         mRequestHandler.removeMessages(MESSAGE_PREFETCH);
         mRequestHandler.removeMessages(MESSAGE_DOWNLOAD);
-        mPrefetchMap.clear();
         mDownloadMap.clear();
     }
 
@@ -119,7 +115,7 @@ public class ThumbnailDownloader<T> extends HandlerThread {
         if(mLruCache.get(url) != null){
             bitmap = mLruCache.get(url);
         } else {
-            byte[] bitmapBytes = new FlickrFetchr().getUrlBytes(url);
+            byte[] bitmapBytes = new FlickrFetchr(1000).getUrlBytes(url);
             bitmap = BitmapFactory.decodeByteArray(bitmapBytes, 0, bitmapBytes.length);
 
             mLruCache.put(url, bitmap); // Cache for later
@@ -132,7 +128,6 @@ public class ThumbnailDownloader<T> extends HandlerThread {
     private void prefetchBitmap(String url){
         try{
             getBitmap(url);
-            mPrefetchMap.remove(url);
         } catch (IOException ioe) {
             Log.e(TAG, "Error pre-fetching image", ioe);
             // By not removing mPrefetchMap in finally, the element can never be pre-fetched again.
@@ -150,6 +145,9 @@ public class ThumbnailDownloader<T> extends HandlerThread {
 
             mResponseHandler.post(new Runnable() {
                 public void run() {
+                    // Although we removed old messages for this target in queueThumbnail, we check
+                    // the desired URL desired is still the one about to be set. There are still
+                    // (rare) conditions where they may be different.
                     if( mDownloadMap.get(target) != url || mHasQuit) return;
 
                     mDownloadMap.remove(target);

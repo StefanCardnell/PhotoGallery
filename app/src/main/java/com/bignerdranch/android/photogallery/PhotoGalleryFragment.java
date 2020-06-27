@@ -183,11 +183,21 @@ public class PhotoGalleryFragment extends Fragment {
             photoHolder.bindDrawable(placeholder);
             mThumbnailDownloader.queueThumbnail(photoHolder, galleryItem.getUrl());
 
-            // Prefetch images for those 20 before and after this bound position
-            int start_idx = Math.max(0, position-20);
-            int end_idx = Math.min(mGalleryItems.size(), position+20);
+            // Prefetch images for those 40 before and after this bound position. Reset on doing so,
+            // to prevent other pre-fetches in progress. This will result in the fetch applying only
+            // to the last PhotoHolder that scrolled in to view (to prevent flooding the message
+            // queue with too many fetch requests for those that scrolled out of view).
+            int start_idx = Math.max(0, position-40);
+            int end_idx = Math.min(mGalleryItems.size(), position+40);
+            List<String> prefetchUrls = new ArrayList<>();
             for(GalleryItem prefetchItem : mGalleryItems.subList(start_idx, end_idx)) {
-                mThumbnailDownloader.queuePrefetch(prefetchItem.getUrl());
+                prefetchUrls.add(prefetchItem.getUrl());
+            }
+            mThumbnailDownloader.queuePrefetchUrls(prefetchUrls, true);
+
+            // Fetch next page if we are binding the 25th-from-last element
+            if(mGalleryItems.size() - position == 25){
+                fetchNextPage();
             }
 
         }

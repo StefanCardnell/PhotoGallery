@@ -20,9 +20,24 @@ public class FlickrFetchr {
 
     private static final String API_KEY = "d01e31fd42a923d212e7cd23335f10e9";
 
+    private int mConnectTimeout;
+    private int mReadTimeout;
+
+    public FlickrFetchr(){
+        mReadTimeout = 0;
+        mConnectTimeout = 0;
+    }
+
+    public FlickrFetchr(int timeout){
+        mConnectTimeout = timeout;
+        mReadTimeout = timeout;
+    }
+
     public byte[] getUrlBytes(String urlSpec) throws IOException {
         URL url = new URL(urlSpec);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setConnectTimeout(mConnectTimeout);
+        connection.setReadTimeout(mReadTimeout);
 
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
