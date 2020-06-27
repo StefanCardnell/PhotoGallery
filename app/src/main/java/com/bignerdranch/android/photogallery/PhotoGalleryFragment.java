@@ -182,6 +182,14 @@ public class PhotoGalleryFragment extends Fragment {
             Drawable placeholder = getResources().getDrawable(R.drawable.bill_up_close);
             photoHolder.bindDrawable(placeholder);
             mThumbnailDownloader.queueThumbnail(photoHolder, galleryItem.getUrl());
+
+            // Prefetch images for those 20 before and after this bound position
+            int start_idx = Math.max(0, position-20);
+            int end_idx = Math.min(mGalleryItems.size(), position+20);
+            for(GalleryItem prefetchItem : mGalleryItems.subList(start_idx, end_idx)) {
+                mThumbnailDownloader.queuePrefetch(prefetchItem.getUrl());
+            }
+
         }
 
         @Override

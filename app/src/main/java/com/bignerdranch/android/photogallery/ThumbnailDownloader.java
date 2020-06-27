@@ -20,15 +20,18 @@ public class ThumbnailDownloader<T> extends HandlerThread {
     private static final String TAG = "ThumbnailDownloader";
 
     private static final int MESSAGE_DOWNLOAD = 0;
+    private static final int MESSAGE_PREFETCH = 1;
 
     private static final int LRU_CACHE_SIZE = 50 * 1024 * 1024; // 50MB cache
 
     private boolean mHasQuit = false;
     private Handler mRequestHandler;
-    // mRequestMap will hold the URL that currently needs to be fetched for a target T. It needs be
+    // mDownloadMap will hold the URL that currently needs to be fetched for a target T. It needs be
     // kept up to date and checked as Messages are created and processed, to ensure the currently
     // desired URL for a target is fetched.
-    private ConcurrentMap<T, String> mRequestMap = new ConcurrentHashMap<>();
+    private ConcurrentMap<T, String> mDownloadMap = new ConcurrentHashMap<>();
+    // Uses to ensure the same URL isn't being pre-fetched twice
+    private ConcurrentMap<String, Boolean> mPrefetchMap = new ConcurrentHashMap<>();
     private Handler mResponseHandler;
     private ThumbnailDownloadListener<T> mThumbnailDownloadListener;
     private LruCache<String, Bitmap> mLruCache = new LruCache<String, Bitmap>(LRU_CACHE_SIZE){
@@ -59,8 +62,12 @@ public class ThumbnailDownloader<T> extends HandlerThread {
             public void handleMessage(@NonNull Message msg) {
                 if(msg.what == MESSAGE_DOWNLOAD) {
                     T target = (T) msg.obj;
-                    Log.i(TAG, "Got a request for URL: " + mRequestMap.get(target));
+                    Log.i(TAG, "Got a request to download URL: " + mDownloadMap.get(target));
                     handleRequest(target);
+                } else if (msg.what == MESSAGE_PREFETCH) {
+                    String url = (String) msg.obj;
+                    Log.i(TAG, "Got a request to pre-fetch URL: " + url);
+                    prefetchBitmap(url);
                 }
             }
         };
@@ -76,47 +83,76 @@ public class ThumbnailDownloader<T> extends HandlerThread {
         Log.i(TAG, "Got a URL: " + url);
 
         if(url == null){
-            mRequestMap.remove(target);
+            mDownloadMap.remove(target);
         } else if (mLruCache.get(url) != null) {
             Bitmap cachedBitmap = mLruCache.get(url);
             mThumbnailDownloadListener.onThumbnailDownloaded(target, cachedBitmap);
         }
         else {
-            mRequestMap.put(target, url);
+            mDownloadMap.put(target, url);
             mRequestHandler.obtainMessage(MESSAGE_DOWNLOAD, target).sendToTarget();
+        }
+    }
+
+    public void queuePrefetch(String url){
+        if(url == null) return;
+        else if(mLruCache.get(url) != null) return; // Already fetched and cached
+        else if(mPrefetchMap.get(url) != null) return; // Fetch already in progress
+        else {
+            mPrefetchMap.put(url, true);
+            mRequestHandler.obtainMessage(MESSAGE_PREFETCH, url).sendToTarget();
+        }
+    }
+
+    public void clearQueue() {
+        mRequestHandler.removeMessages(MESSAGE_PREFETCH);
+        mRequestHandler.removeMessages(MESSAGE_DOWNLOAD);
+        mPrefetchMap.clear();
+        mDownloadMap.clear();
+    }
+
+    /**
+     * Obtains and LRU caches a thumbnail at the specified URL.
+     */
+    private Bitmap getBitmap(String url) throws IOException {
+        Bitmap bitmap;
+        if(mLruCache.get(url) != null){
+            bitmap = mLruCache.get(url);
+        } else {
+            byte[] bitmapBytes = new FlickrFetchr().getUrlBytes(url);
+            bitmap = BitmapFactory.decodeByteArray(bitmapBytes, 0, bitmapBytes.length);
+
+            mLruCache.put(url, bitmap); // Cache for later
+            int cacheUsage = (int) (100 * ((float) mLruCache.size() / LRU_CACHE_SIZE));
+            Log.i(TAG, "Bitmap obtained and cached. Cache Usage: " + cacheUsage + "%");
+        }
+        return bitmap;
+    }
+
+    private void prefetchBitmap(String url){
+        try{
+            getBitmap(url);
+            mPrefetchMap.remove(url);
+        } catch (IOException ioe) {
+            Log.e(TAG, "Error pre-fetching image", ioe);
+            // By not removing mPrefetchMap in finally, the element can never be pre-fetched again.
         }
 
     }
 
-    public void clearQueue() {
-        mRequestHandler.removeMessages(MESSAGE_DOWNLOAD);
-        mRequestMap.clear();
-    }
-
     private void handleRequest(final T target){
         try {
-            final String url = mRequestMap.get(target);
+            final String url = mDownloadMap.get(target);
 
             if (url == null) return;
 
-            final Bitmap bitmap;
-            // A different message could've fetched the URL in the time between queueThumbnail and
-            // handleRequest executing for this message.
-            if(mLruCache.get(url) != null){
-                bitmap = mLruCache.get(url);
-            } else {
-                byte[] bitmapBytes = new FlickrFetchr().getUrlBytes(url);
-                bitmap = BitmapFactory.decodeByteArray(bitmapBytes, 0, bitmapBytes.length);
-                mLruCache.put(url, bitmap); // Cache for later
-                int cacheUsage = (int) (100 * ((float) mLruCache.size() / LRU_CACHE_SIZE));
-                Log.i(TAG, "Bitmap created and cached. Cached Images: " + cacheUsage + "%");
-            }
+            final Bitmap bitmap = getBitmap(url);
 
             mResponseHandler.post(new Runnable() {
                 public void run() {
-                    if( mRequestMap.get(target) != url || mHasQuit) return;
+                    if( mDownloadMap.get(target) != url || mHasQuit) return;
 
-                    mRequestMap.remove(target);
+                    mDownloadMap.remove(target);
                     mThumbnailDownloadListener.onThumbnailDownloaded(target, bitmap);
                 }
             });
