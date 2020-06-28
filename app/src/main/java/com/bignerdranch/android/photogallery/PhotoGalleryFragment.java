@@ -1,5 +1,6 @@
 package com.bignerdranch.android.photogallery;
 
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
@@ -23,7 +24,9 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,12 +35,13 @@ public class PhotoGalleryFragment extends Fragment {
 
     private static final String TAG = "PhotoGalleryFragment";
 
-    private boolean mLoadingPage = false;
+    private boolean mLoadingPage = false; // Indicates if page load is in progress
     private int mNextPage = 1;
     private List<GalleryItem> mItems = new ArrayList<>();
     private ThumbnailDownloader<PhotoHolder> mThumbnailDownloader;
 
     private RecyclerView mPhotoRecyclerView;
+    private ProgressBar mProgressBar;
     private SearchView mSearchView;
 
     public static PhotoGalleryFragment newInstance() {
@@ -64,13 +68,15 @@ public class PhotoGalleryFragment extends Fragment {
         protected void onPreExecute() {
             super.onPreExecute();
             mLoadingPage = true;
+            updateUI();
         }
 
         @Override
         protected void onPostExecute(List<GalleryItem> items) {
-            addToItems(items);
             mNextPage++;
             mLoadingPage = false;
+            addToItems(items);
+            updateUI();
         }
     }
 
@@ -124,6 +130,10 @@ public class PhotoGalleryFragment extends Fragment {
         });
         mPhotoRecyclerView.setAdapter(new PhotoAdapter(mItems));
 
+        mProgressBar = v.findViewById(R.id.progress_bar);
+
+        updateUI();
+
         return v;
     }
 
@@ -132,13 +142,15 @@ public class PhotoGalleryFragment extends Fragment {
         super.onCreateOptionsMenu(menu, inflater);
         inflater.inflate(R.menu.fragment_photo_gallery, menu);
 
-        MenuItem searchItem = menu.findItem(R.id.menu_item_search);
+        final MenuItem searchItem = menu.findItem(R.id.menu_item_search);
         mSearchView = (SearchView) searchItem.getActionView();
         mSearchView.setOnQueryTextListener(new SearchView.OnQueryTextListener(){
             @Override
             public boolean onQueryTextSubmit(String query) {
                 Log.i(TAG, "QueryTextSubmit: " + query);
                 submitQuery(query);
+                hideKeyboard();
+                searchItem.collapseActionView();
                 return true;
             }
 
@@ -183,12 +195,17 @@ public class PhotoGalleryFragment extends Fragment {
         Log.i(TAG, "Background thread destroyed");
     }
 
-    private void submitQuery(String query){
-        QueryPreferences.setStoredQuery(getActivity(), query);
-        mThumbnailDownloader.clearQueue(); // Remove current fetches in progress
-        mNextPage = 1; // Reset current page
-        setItems(new ArrayList<GalleryItem>()); // Reset items
-        fetchNextPage();
+    public void updateUI(){
+        if(!isAdded()) return; // Fragment not necessarily attached to access recycler view yet
+
+        if(mLoadingPage && mNextPage == 1){
+            mProgressBar.setVisibility(View.VISIBLE);
+            mPhotoRecyclerView.setVisibility(View.GONE);
+        } else {
+            mProgressBar.setVisibility(View.GONE);
+            mPhotoRecyclerView.setVisibility(View.VISIBLE);
+        }
+
     }
 
     public void setItems(List<GalleryItem> items) {
@@ -211,6 +228,22 @@ public class PhotoGalleryFragment extends Fragment {
         // ThumbnailDownloader will cancel older fetches done for these ViewHolders when the user is
         // scrolling (as removeMessages is done against the ViewHolder hash code)
         adapter.notifyItemRangeInserted(oldSize, items.size());
+    }
+
+    private void submitQuery(String query){
+        QueryPreferences.setStoredQuery(getActivity(), query);
+        mThumbnailDownloader.clearQueue(); // Remove current fetches in progress
+        mNextPage = 1; // Reset current page
+        setItems(new ArrayList<GalleryItem>()); // Reset items
+        fetchNextPage();
+    }
+
+    private void hideKeyboard() {
+        View view = getActivity().getCurrentFocus();
+        if (view != null) {
+            InputMethodManager imm = (InputMethodManager) getActivity().getSystemService(Context.INPUT_METHOD_SERVICE);
+            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        }
     }
 
     private void fetchNextPage() {
@@ -264,8 +297,8 @@ public class PhotoGalleryFragment extends Fragment {
             // to prevent other pre-fetches in progress. This will result in the fetch applying only
             // to the last PhotoHolder that scrolled in to view (to prevent flooding the message
             // queue with too many fetch requests for those that scrolled out of view).
-            int start_idx = Math.max(0, position-25);
-            int end_idx = Math.min(mGalleryItems.size(), position+25);
+            int start_idx = Math.max(0, position-40);
+            int end_idx = Math.min(mGalleryItems.size(), position+40);
             List<String> prefetchUrls = new ArrayList<>();
             for(GalleryItem prefetchItem : mGalleryItems.subList(start_idx, end_idx)) {
                 prefetchUrls.add(prefetchItem.getUrl());
