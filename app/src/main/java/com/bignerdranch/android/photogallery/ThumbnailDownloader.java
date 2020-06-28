@@ -79,14 +79,16 @@ public class ThumbnailDownloader<T> extends HandlerThread {
     }
 
     public void queueThumbnail(T target, String url){
+        mRequestHandler.removeMessages(MESSAGE_DOWNLOAD, target); // Remove existing messages
+        // Do mDownloadMap.remove or put for the benefit of Messages already running for this target
         if(url == null){
             mDownloadMap.remove(target);
         } else if (mLruCache.get(url) != null) {
+            mDownloadMap.remove(target);
             Bitmap cachedBitmap = mLruCache.get(url);
             mThumbnailDownloadListener.onThumbnailDownloaded(target, cachedBitmap);
         }
         else {
-            mRequestHandler.removeMessages(MESSAGE_DOWNLOAD, target); // Remove existing messages
             mDownloadMap.put(target, url);
             mRequestHandler.obtainMessage(MESSAGE_DOWNLOAD, target).sendToTarget();
         }

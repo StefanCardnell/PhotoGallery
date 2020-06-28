@@ -8,6 +8,7 @@ import android.os.Bundle;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.widget.SearchView;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -16,6 +17,9 @@ import android.os.Handler;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
@@ -34,15 +38,26 @@ public class PhotoGalleryFragment extends Fragment {
     private ThumbnailDownloader<PhotoHolder> mThumbnailDownloader;
 
     private RecyclerView mPhotoRecyclerView;
+    private SearchView mSearchView;
 
     public static PhotoGalleryFragment newInstance() {
         return new PhotoGalleryFragment();
     }
 
     private class FetchItemsTask extends AsyncTask<Void, Void, List<GalleryItem>> {
+        private String mQuery;
+
+        public FetchItemsTask(String query){
+            mQuery = query;
+        }
+
         @Override
         protected List<GalleryItem> doInBackground(Void... voids) {
-            return new FlickrFetchr().fetchItems(mNextPage);
+            if(mQuery == null || mQuery.isEmpty()) {
+                return new FlickrFetchr().fetchRecentPhotos(mNextPage);
+            } else {
+                return new FlickrFetchr().searchPhotos(mQuery, mNextPage);
+            }
         }
 
         @Override
@@ -53,9 +68,8 @@ public class PhotoGalleryFragment extends Fragment {
 
         @Override
         protected void onPostExecute(List<GalleryItem> items) {
-            mItems.addAll(items);
+            addToItems(items);
             mNextPage++;
-            setupAdapter();
             mLoadingPage = false;
         }
     }
@@ -64,6 +78,7 @@ public class PhotoGalleryFragment extends Fragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setRetainInstance(true);
+        setHasOptionsMenu(true);
         fetchNextPage();
 
         Handler responseHandler = new Handler();
@@ -107,10 +122,52 @@ public class PhotoGalleryFragment extends Fragment {
                 }
             }
         });
-
-        setupAdapter();
+        mPhotoRecyclerView.setAdapter(new PhotoAdapter(mItems));
 
         return v;
+    }
+
+    @Override
+    public void onCreateOptionsMenu(@NonNull Menu menu, @NonNull MenuInflater inflater) {
+        super.onCreateOptionsMenu(menu, inflater);
+        inflater.inflate(R.menu.fragment_photo_gallery, menu);
+
+        MenuItem searchItem = menu.findItem(R.id.menu_item_search);
+        mSearchView = (SearchView) searchItem.getActionView();
+        mSearchView.setOnQueryTextListener(new SearchView.OnQueryTextListener(){
+            @Override
+            public boolean onQueryTextSubmit(String query) {
+                Log.i(TAG, "QueryTextSubmit: " + query);
+                submitQuery(query);
+                return true;
+            }
+
+            @Override
+            public boolean onQueryTextChange(String newText) {
+                Log.i(TAG, "QueryTextChange: " + newText);
+                return false;
+            }
+        });
+        mSearchView.setOnSearchClickListener(new View.OnClickListener(){
+            @Override
+            public void onClick(View view) {
+                String query = QueryPreferences.getStoredQuery(getActivity());
+                mSearchView.setQuery(query, false);
+            }
+        });
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        switch(item.getItemId()){
+            case R.id.menu_item_clear:
+                mSearchView.setQuery(null, false); // Sets shown query to null
+                submitQuery(null);
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
+        }
+
     }
 
     @Override
@@ -126,21 +183,40 @@ public class PhotoGalleryFragment extends Fragment {
         Log.i(TAG, "Background thread destroyed");
     }
 
-    private void setupAdapter() {
-        if (!isAdded()) return; // Fragment not necessarily attached to access recycler view
+    private void submitQuery(String query){
+        QueryPreferences.setStoredQuery(getActivity(), query);
+        mThumbnailDownloader.clearQueue(); // Remove current fetches in progress
+        mNextPage = 1; // Reset current page
+        setItems(new ArrayList<GalleryItem>()); // Reset items
+        fetchNextPage();
+    }
 
+    public void setItems(List<GalleryItem> items) {
+        mItems = items;
+
+        if (!isAdded()) return; // Fragment not necessarily attached to access recycler view
         PhotoAdapter adapter = (PhotoAdapter) mPhotoRecyclerView.getAdapter();
-        if (adapter == null) {
-            mPhotoRecyclerView.setAdapter(new PhotoAdapter(mItems));
-        } else {
-            adapter.setGalleryItems(mItems);
-            adapter.notifyDataSetChanged();
-        }
+        adapter.setGalleryItems(mItems);
+        adapter.notifyDataSetChanged();
+    }
+
+    private void addToItems(List<GalleryItem> items){
+        int oldSize = mItems.size();
+        mItems.addAll(items);
+
+        if(!isAdded()) return; // Fragment not necessarily attached to access recycler view
+        PhotoAdapter adapter = (PhotoAdapter) mPhotoRecyclerView.getAdapter();
+        adapter.setGalleryItems(mItems);
+        // BY using notifyItemRangeInserted we always hold on to the same View Holders, which means
+        // ThumbnailDownloader will cancel older fetches done for these ViewHolders when the user is
+        // scrolling (as removeMessages is done against the ViewHolder hash code)
+        adapter.notifyItemRangeInserted(oldSize, items.size());
     }
 
     private void fetchNextPage() {
         if (mLoadingPage) return; // Previous task is still loading a page
-        new FetchItemsTask().execute();
+        String query = QueryPreferences.getStoredQuery(getActivity());
+        new FetchItemsTask(query).execute();
     }
 
     private class PhotoHolder extends RecyclerView.ViewHolder {
@@ -173,13 +249,14 @@ public class PhotoGalleryFragment extends Fragment {
         public PhotoHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             LayoutInflater inflater = LayoutInflater.from(getActivity());
             View view = inflater.inflate(R.layout.list_item_gallery, parent, false);
+            Log.i(TAG, "Creating View Holder");
             return new PhotoHolder(view);
         }
 
         @Override
         public void onBindViewHolder(@NonNull PhotoHolder photoHolder, int position) {
             GalleryItem galleryItem = mGalleryItems.get(position);
-            Drawable placeholder = getResources().getDrawable(R.drawable.bill_up_close);
+            Drawable placeholder = getResources().getDrawable(R.drawable.ana_blink);
             photoHolder.bindDrawable(placeholder);
             mThumbnailDownloader.queueThumbnail(photoHolder, galleryItem.getUrl());
 
@@ -187,8 +264,8 @@ public class PhotoGalleryFragment extends Fragment {
             // to prevent other pre-fetches in progress. This will result in the fetch applying only
             // to the last PhotoHolder that scrolled in to view (to prevent flooding the message
             // queue with too many fetch requests for those that scrolled out of view).
-            int start_idx = Math.max(0, position-40);
-            int end_idx = Math.min(mGalleryItems.size(), position+40);
+            int start_idx = Math.max(0, position-25);
+            int end_idx = Math.min(mGalleryItems.size(), position+25);
             List<String> prefetchUrls = new ArrayList<>();
             for(GalleryItem prefetchItem : mGalleryItems.subList(start_idx, end_idx)) {
                 prefetchUrls.add(prefetchItem.getUrl());
