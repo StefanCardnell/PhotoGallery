@@ -1,108 +1,28 @@
 package com.bignerdranch.android.photogallery;
 
-import android.app.AlarmManager;
-import android.app.IntentService;
-import android.app.Notification;
-import android.app.PendingIntent;
 import android.content.Context;
-import android.content.Intent;
-import android.content.res.Resources;
-import android.net.ConnectivityManager;
-import android.os.SystemClock;
-import android.util.Log;
+import android.os.Build;
 
-import androidx.annotation.Nullable;
-import androidx.core.app.NotificationCompat;
-import androidx.core.app.NotificationManagerCompat;
+public class PollService {
 
-import java.util.List;
-import java.util.concurrent.TimeUnit;
-
-public class PollService extends IntentService {
-    private static final String TAG = "PollService";
-
-    private static final long POLL_INTERVAL_MS = TimeUnit.MINUTES.toMillis(1);
-
-    public static Intent newIntent(Context context){
-        return new Intent(context, PollService.class);
+    private static boolean useJobScheduler(){
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
     }
 
-    public PollService(){
-        super(TAG);
-    }
-
-    public static void setServiceAlarm(Context context, boolean isOn) {
-        Intent i = PollService.newIntent(context);
-        PendingIntent pi = PendingIntent.getService(context, 0, i , 0);
-
-        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-
-        if(isOn) {
-            alarmManager.setRepeating(AlarmManager.ELAPSED_REALTIME,
-                    SystemClock.elapsedRealtime(), POLL_INTERVAL_MS, pi);
+    public static boolean isServiceOn(Context context){
+        if(useJobScheduler()){
+            return PollServiceJob.isJobScheduled(context);
         } else {
-            alarmManager.cancel(pi);
-            pi.cancel();
+            return PollServiceIntent.isServiceAlarmOn(context);
         }
     }
 
-    public static boolean isServiceAlarmOn(Context context){
-        Intent i = PollService.newIntent(context);
-        PendingIntent pi = PendingIntent.getService(context, 0, i, PendingIntent.FLAG_NO_CREATE);
-        return pi != null;
-    }
-
-    @Override
-    protected void onHandleIntent(@Nullable Intent intent) {
-        if(!isNetworkAvailableAndConnected()) return;
-
-        String query = QueryPreferences.getStoredQuery(this);
-        String lastResultId = QueryPreferences.getLastResultId(this);
-
-        List<GalleryItem> items;
-
-        if(query == null || query.isEmpty()){
-            items = new FlickrFetchr().fetchRecentPhotos(0);
+    public static void setService(Context context, boolean isOn){
+        if(useJobScheduler()){
+            PollServiceJob.setJobSchedule(context, isOn);
         } else {
-            items = new FlickrFetchr().searchPhotos(query, 0);
+            PollServiceIntent.setServiceAlarm(context, isOn);
         }
-
-        if (items.size() == 0) {
-            return;
-        }
-
-        String resultId = items.get(0).getId();
-        if(resultId.equals(lastResultId)){
-            Log.i(TAG, "Got an old result: " + resultId);
-        } else {
-            Log.i(TAG, "Got a new result: " + resultId);
-
-            Resources resources = getResources();
-            Intent i = PhotoGalleryActivity.newIntent(this);
-            PendingIntent pi = PendingIntent.getActivity(this, 0, i, 0);
-
-            Notification notification = new NotificationCompat.Builder(this)
-                    .setTicker(resources.getString(R.string.new_pictures_title))
-                    .setSmallIcon(android.R.drawable.ic_menu_report_image)
-                    .setContentTitle(resources.getString(R.string.new_pictures_title))
-                    .setContentText(resources.getString(R.string.new_pictures_text))
-                    .setContentIntent(pi)
-                    .setAutoCancel(true)
-                    .build();
-
-            NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
-            notificationManager.notify(0, notification);
-        }
-
-        QueryPreferences.setLastResultId(this, resultId);
     }
 
-    private boolean isNetworkAvailableAndConnected() {
-        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-
-        boolean isNetworkAvailable = cm.getActiveNetworkInfo() != null;
-        boolean isNetworkConnected = isNetworkAvailable && cm.getActiveNetworkInfo().isConnected();
-
-        return isNetworkConnected;
-    }
 }

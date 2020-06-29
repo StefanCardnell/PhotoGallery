@@ -169,7 +169,7 @@ public class PhotoGalleryFragment extends Fragment {
         });
 
         MenuItem toggleItem = menu.findItem(R.id.menu_item_toggle_polling);
-        if(PollService.isServiceAlarmOn(getActivity())){
+        if(PollService.isServiceOn(getActivity())){
             toggleItem.setTitle(R.string.stop_polling);
         } else {
             toggleItem.setTitle(R.string.start_polling);
@@ -184,8 +184,8 @@ public class PhotoGalleryFragment extends Fragment {
                 submitQuery(null);
                 return true;
             case R.id.menu_item_toggle_polling:
-                boolean shouldStartAlarm = !PollService.isServiceAlarmOn(getActivity());
-                PollService.setServiceAlarm(getActivity(), shouldStartAlarm);
+                boolean shouldStartService = !PollService.isServiceOn(getActivity());
+                PollService.setService(getActivity(), shouldStartService);
                 getActivity().invalidateOptionsMenu();
                 return true;
             default:
