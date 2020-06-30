@@ -1,16 +1,18 @@
 package com.bignerdranch.android.photogallery;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Bundle;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.widget.SearchView;
-import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -137,6 +139,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
         return v;
     }
 
+    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     @Override
     public void onCreateOptionsMenu(@NonNull Menu menu, @NonNull MenuInflater inflater) {
         super.onCreateOptionsMenu(menu, inflater);
@@ -176,6 +179,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
         }
     }
 
+    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     @Override
     public boolean onOptionsItemSelected(@NonNull MenuItem item) {
         switch(item.getItemId()){
@@ -264,16 +268,28 @@ public class PhotoGalleryFragment extends VisibleFragment {
         new FetchItemsTask(query).execute();
     }
 
-    private class PhotoHolder extends RecyclerView.ViewHolder {
+    private class PhotoHolder extends RecyclerView.ViewHolder implements View.OnClickListener {
         private ImageView mItemImageView;
+        private GalleryItem mGalleryItem;
 
         public PhotoHolder(View itemView) {
             super(itemView);
             mItemImageView = itemView.findViewById(R.id.item_image_view);
+            itemView.setOnClickListener(this);
         }
 
         public void bindDrawable(Drawable drawable) {
             mItemImageView.setImageDrawable(drawable);
+        }
+
+        public void bindGalleryItem(GalleryItem galleryItem){
+            mGalleryItem = galleryItem;
+        }
+
+        @Override
+        public void onClick(View view) {
+            Intent i = new Intent(Intent.ACTION_VIEW, mGalleryItem.getPhotoPageUri());
+            startActivity(i);
         }
     }
 
@@ -301,6 +317,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
         @Override
         public void onBindViewHolder(@NonNull PhotoHolder photoHolder, int position) {
             GalleryItem galleryItem = mGalleryItems.get(position);
+            photoHolder.bindGalleryItem(galleryItem);
             Drawable placeholder = getResources().getDrawable(R.drawable.ana_blink);
             photoHolder.bindDrawable(placeholder);
             mThumbnailDownloader.queueThumbnail(photoHolder, galleryItem.getUrl());
