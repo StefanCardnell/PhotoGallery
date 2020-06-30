@@ -82,6 +82,7 @@ public class FlickrFetchr {
             public static class Photo {
                 public String id;
                 public String title;
+                public String owner;
                 public String url_s;
             }
         }
@@ -92,7 +93,7 @@ public class FlickrFetchr {
         FlickrResult flickrResult = gson.fromJson(jsonString, FlickrResult.class);
         for(int i = 0; i < flickrResult.photos.photo.length; ++i){
             FlickrResult.Photos.Photo photo = flickrResult.photos.photo[i];
-            items.add(new GalleryItem(photo.title, photo.id, photo.url_s));
+            items.add(new GalleryItem(photo.title, photo.id, photo.url_s, photo.owner));
         }
     }
 
