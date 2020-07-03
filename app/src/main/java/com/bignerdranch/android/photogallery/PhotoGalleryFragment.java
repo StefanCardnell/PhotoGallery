@@ -231,8 +231,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
      * Updates the UI to show or hide the indeterminate progress bar.
      *
      * @param checkView Whether to check Views are in place before updating. Set to false if calling
-     *                 from onCreateView and the view has been put in place.
-     *
+     *                 from onCreateView and the view has already been put in place.
      */
     public void updateUI(boolean checkView){
         if(checkView && getView() == null) return; // Fragment not ready to access recycler view yet
@@ -311,7 +310,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
 
         @Override
         public void onClick(View view) {
-            Intent i = new Intent(Intent.ACTION_VIEW, mGalleryItem.getPhotoPageUri());
+            Intent i = PhotoPageActivity.newIntent(getActivity(), mGalleryItem.getPhotoPageUri());
             startActivity(i);
         }
     }
