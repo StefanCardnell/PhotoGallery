@@ -70,7 +70,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
         protected void onPreExecute() {
             super.onPreExecute();
             mLoadingPage = true;
-            updateUI();
+            updateUI(true);
         }
 
         @Override
@@ -78,12 +78,13 @@ public class PhotoGalleryFragment extends VisibleFragment {
             mNextPage++;
             mLoadingPage = false;
             addToItems(items);
-            updateUI();
+            updateUI(true);
         }
     }
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
+        Log.i(TAG, "OnCreate called");
         super.onCreate(savedInstanceState);
         setRetainInstance(true);
         setHasOptionsMenu(true);
@@ -108,6 +109,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
+        Log.i(TAG, "OnCreateView Called");
         View v = inflater.inflate(R.layout.fragment_photo_gallery, container, false);
         mPhotoRecyclerView = v.findViewById(R.id.photo_recycler_view);
         mPhotoRecyclerView.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
@@ -134,7 +136,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
 
         mProgressBar = v.findViewById(R.id.progress_bar);
 
-        updateUI();
+        updateUI(false);
 
         return v;
     }
@@ -200,19 +202,40 @@ public class PhotoGalleryFragment extends VisibleFragment {
 
     @Override
     public void onDestroyView() {
+        Log.i(TAG, "onDestroyView called");
         super.onDestroyView();
         mThumbnailDownloader.clearQueue();
     }
 
     @Override
     public void onDestroy() {
+        Log.i(TAG, "onDestroy called");
         super.onDestroy();
         mThumbnailDownloader.quit();
         Log.i(TAG, "Background thread destroyed");
     }
 
-    public void updateUI(){
-        if(!isAdded()) return; // Fragment not necessarily attached to access recycler view yet
+    @Override
+    public void onDetach() {
+        super.onDetach();
+        Log.i(TAG, "onDetach called");
+    }
+
+    @Override
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
+        Log.i(TAG, "onAttach called.");
+    }
+
+    /**
+     * Updates the UI to show or hide the indeterminate progress bar.
+     *
+     * @param checkView Whether to check Views are in place before updating. Set to false if calling
+     *                 from onCreateView and the view has been put in place.
+     *
+     */
+    public void updateUI(boolean checkView){
+        if(checkView && getView() == null) return; // Fragment not ready to access recycler view yet
 
         if(mLoadingPage && mNextPage == 1){
             mProgressBar.setVisibility(View.VISIBLE);
@@ -227,7 +250,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
     public void setItems(List<GalleryItem> items) {
         mItems = items;
 
-        if (!isAdded()) return; // Fragment not necessarily attached to access recycler view
+        if (getView() == null) return; // Fragment not necessarily able to access recycler view yet
         PhotoAdapter adapter = (PhotoAdapter) mPhotoRecyclerView.getAdapter();
         adapter.setGalleryItems(mItems);
         adapter.notifyDataSetChanged();
@@ -237,7 +260,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
         int oldSize = mItems.size();
         mItems.addAll(items);
 
-        if(!isAdded()) return; // Fragment not necessarily attached to access recycler view
+        if(getView() == null) return; // Fragment not necessarily attached to access recycler view
         PhotoAdapter adapter = (PhotoAdapter) mPhotoRecyclerView.getAdapter();
         adapter.setGalleryItems(mItems);
         // BY using notifyItemRangeInserted we always hold on to the same View Holders, which means
@@ -296,6 +319,7 @@ public class PhotoGalleryFragment extends VisibleFragment {
     private class PhotoAdapter extends RecyclerView.Adapter<PhotoHolder> {
 
         private List<GalleryItem> mGalleryItems;
+        private Handler prefetchHandler = new Handler();
 
         public PhotoAdapter(List<GalleryItem> galleryItems) {
             mGalleryItems = galleryItems;
@@ -315,24 +339,33 @@ public class PhotoGalleryFragment extends VisibleFragment {
         }
 
         @Override
-        public void onBindViewHolder(@NonNull PhotoHolder photoHolder, int position) {
+        public void onBindViewHolder(@NonNull PhotoHolder photoHolder, final int position) {
             GalleryItem galleryItem = mGalleryItems.get(position);
             photoHolder.bindGalleryItem(galleryItem);
             Drawable placeholder = getResources().getDrawable(R.drawable.ana_blink);
             photoHolder.bindDrawable(placeholder);
+
             mThumbnailDownloader.queueThumbnail(photoHolder, galleryItem.getUrl());
 
-            // Prefetch images for those 40 before and after this bound position. Reset on doing so,
-            // to prevent other pre-fetches in progress. This will result in the fetch applying only
-            // to the last PhotoHolder that scrolled in to view (to prevent flooding the message
-            // queue with too many fetch requests for those that scrolled out of view).
-            int start_idx = Math.max(0, position-40);
-            int end_idx = Math.min(mGalleryItems.size(), position+40);
-            List<String> prefetchUrls = new ArrayList<>();
-            for(GalleryItem prefetchItem : mGalleryItems.subList(start_idx, end_idx)) {
-                prefetchUrls.add(prefetchItem.getUrl());
-            }
-            mThumbnailDownloader.queuePrefetchUrls(prefetchUrls, true);
+            // Prefetch images for those 40 before and after this bound position. To stop flooding
+            // the message queue with too many fetch requests for those scrolled out of view, we do
+            // two things:
+            // 1) We use a handler in this thread with a delay of 100ms, so nothing is run until an
+            // the user stops scrolling.
+            // 2) queuePrefetchUrls does a removal of messages already in queue.
+            prefetchHandler.removeCallbacksAndMessages(null);
+            prefetchHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    int start_idx = Math.max(0, position-40);
+                    int end_idx = Math.min(mGalleryItems.size(), position+40);
+                    List<String> prefetchUrls = new ArrayList<>();
+                    for(GalleryItem prefetchItem : mGalleryItems.subList(start_idx, end_idx)) {
+                        prefetchUrls.add(prefetchItem.getUrl());
+                    }
+                    mThumbnailDownloader.queuePrefetchUrls(prefetchUrls, true);
+                }
+            }, 100);
 
             // Fetch next page if we are binding the 25th-from-last element
             if(mGalleryItems.size() - position == 25){
